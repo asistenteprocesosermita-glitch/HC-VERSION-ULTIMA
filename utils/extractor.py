@@ -1,61 +1,114 @@
 import re
-import pandas as pd
+from utils.config import (
+    PATRONES_PACIENTE, PROCEDIMIENTOS_KEYWORDS, MEDICAMENTOS_KEYWORDS,
+    LABORATORIOS_KEYWORDS, IMAGENES_KEYWORDS, INTERCONSULTAS_KEYWORDS,
+    PATRON_FECHA
+)
 
-def extract_patient_info(text):
-    """Extrae datos del paciente: CC, nombre, edad, EPS."""
+def extraer_info_paciente(texto):
+    """Extrae datos del paciente usando patrones predefinidos."""
     info = {}
-    # Patrones (ajusta según el formato real de tus documentos)
-    cc_match = re.search(r'No\.?\s*CC:\s*(\d+)', text, re.IGNORECASE)
-    if cc_match:
-        info['cc'] = cc_match.group(1)
-    
-    nombre_match = re.search(r'Nombre:\s*([A-ZÁÉÍÓÚÑ\s]+?)(?:\n|Edad|Fecha)', text, re.IGNORECASE)
-    if nombre_match:
-        info['nombre'] = nombre_match.group(1).strip()
-    
-    edad_match = re.search(r'Edad actual:\s*(\d+)', text, re.IGNORECASE)
-    if edad_match:
-        info['edad'] = edad_match.group(1)
-    
-    eps_match = re.search(r'Empresa:\s*(.+?)(?:\n|$)', text, re.IGNORECASE)
-    if eps_match:
-        info['eps'] = eps_match.group(1).strip()
-    
+    for clave, patron in PATRONES_PACIENTE.items():
+        match = re.search(patron, texto, re.IGNORECASE)
+        if match:
+            info[clave] = match.group(1).strip()
     return info
 
-def extract_admission_dates(text):
-    """Extrae fechas de ingreso a cada servicio."""
-    # Busca patrones como "INGRESO: 30/10/2025" o "Fecha de ingreso: ..."
-    # Devuelve lista de diccionarios con servicio, fecha ingreso, fecha egreso
-    admissions = []
-    # Ejemplo simple: buscar "Hospitalización General" seguido de fecha
-    pattern = r'(Hospitalización\s+General|UCI|Cuidados\s+Intensivos).*?(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2})'
-    matches = re.finditer(pattern, text, re.IGNORECASE)
-    for match in matches:
-        admissions.append({
-            'servicio': match.group(1),
-            'fecha': match.group(2),
-            'hora': match.group(3)
-        })
-    # Luego habría que emparejar ingresos y egresos...
-    return admissions
+def extraer_fechas_servicios(texto):
+    """
+    Busca menciones de servicios (hospitalización, UCI) con fechas asociadas.
+    Retorna lista de diccionarios con 'servicio', 'fecha_ingreso', 'fecha_egreso' (si existe).
+    """
+    servicios_encontrados = []
+    lineas = texto.split('\n')
+    for i, linea in enumerate(lineas):
+        if re.search(r'hospitalización|uci|cuidados intensivos', linea, re.IGNORECASE):
+            # Buscar fechas en la misma línea o en las cercanas
+            fechas = re.findall(PATRON_FECHA, linea)
+            if fechas:
+                # Asumir que la primera fecha es ingreso
+                servicio = {
+                    'servicio': linea.strip(),
+                    'fecha_ingreso': fechas[0],
+                    'fecha_egreso': fechas[1] if len(fechas) > 1 else None
+                }
+                servicios_encontrados.append(servicio)
+    return servicios_encontrados
 
-def extract_procedures(text):
-    """Busca procedimientos (palabras clave como 'biopsia', 'catéter', etc.)"""
-    keywords = ['biopsia', 'catéter', 'intubación', 'toracocentesis', 'transfusión', 
-                'colocación de', 'ventilación mecánica', 'sonda']
-    procedures = []
-    lines = text.split('\n')
-    for i, line in enumerate(lines):
-        for kw in keywords:
-            if kw.lower() in line.lower():
-                # Intenta capturar fecha si está cerca
-                date_match = re.search(r'(\d{2}/\d{2}/\d{4})', line)
-                fecha = date_match.group(1) if date_match else None
-                procedures.append({
-                    'procedimiento': line.strip(),
-                    'fecha': fecha
+def extraer_procedimientos(texto):
+    """Busca líneas que contengan palabras clave de procedimientos y extrae fecha si es posible."""
+    procedimientos = []
+    lineas = texto.split('\n')
+    for linea in lineas:
+        for kw in PROCEDIMIENTOS_KEYWORDS:
+            if kw.lower() in linea.lower():
+                fecha_match = re.search(PATRON_FECHA, linea)
+                procedimientos.append({
+                    'procedimiento': linea.strip(),
+                    'fecha': fecha_match.group(0) if fecha_match else None
                 })
-    return procedures
+                break  # Evitar duplicados por múltiples keywords
+    return procedimientos
 
-# ... más funciones para medicamentos, laboratorios, imágenes, etc.
+def extraer_medicamentos(texto):
+    """Busca medicamentos por palabras clave, preferentemente en secciones de fórmula médica."""
+    medicamentos = []
+    # Primero, intentar acotar a secciones de fórmula médica si es posible
+    # Por simplicidad, buscamos en todo el texto
+    lineas = texto.split('\n')
+    for linea in lineas:
+        for kw in MEDICAMENTOS_KEYWORDS:
+            if kw.lower() in linea.lower():
+                fecha_match = re.search(PATRON_FECHA, linea)
+                medicamentos.append({
+                    'medicamento': linea.strip(),
+                    'fecha': fecha_match.group(0) if fecha_match else None
+                })
+                break
+    return medicamentos
+
+def extraer_laboratorios(texto):
+    """Extrae órdenes o resultados de laboratorio mencionados."""
+    laboratorios = []
+    lineas = texto.split('\n')
+    for linea in lineas:
+        for kw in LABORATORIOS_KEYWORDS:
+            if kw.lower() in linea.lower():
+                fecha_match = re.search(PATRON_FECHA, linea)
+                laboratorios.append({
+                    'examen': linea.strip(),
+                    'fecha': fecha_match.group(0) if fecha_match else None
+                })
+                break
+    return laboratorios
+
+def extraer_imagenes(texto):
+    """Extrae estudios de imágenes diagnósticas."""
+    imagenes = []
+    lineas = texto.split('\n')
+    for linea in lineas:
+        for kw in IMAGENES_KEYWORDS:
+            if kw.lower() in linea.lower():
+                fecha_match = re.search(PATRON_FECHA, linea)
+                imagenes.append({
+                    'estudio': linea.strip(),
+                    'fecha': fecha_match.group(0) if fecha_match else None
+                })
+                break
+    return imagenes
+
+def extraer_interconsultas(texto):
+    """Extrae menciones de interconsultas o valoraciones por especialistas."""
+    interconsultas = []
+    lineas = texto.split('\n')
+    for linea in lineas:
+        for kw in INTERCONSULTAS_KEYWORDS:
+            if kw.lower() in linea.lower() and ('interconsulta' in linea.lower() or 'valoración' in linea.lower()):
+                fecha_match = re.search(PATRON_FECHA, linea)
+                interconsultas.append({
+                    'especialidad': kw.capitalize(),
+                    'descripcion': linea.strip(),
+                    'fecha': fecha_match.group(0) if fecha_match else None
+                })
+                break
+    return interconsultas
